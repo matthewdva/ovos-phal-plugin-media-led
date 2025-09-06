@@ -63,7 +63,15 @@ class MediaLedPlugin(PHALPlugin):
     def _on_player_state(self, message):
         # message.data.get("state") typically: "playing" | "paused" | "stopped" | "buffering"
         state = (message.data or {}).get("state") or ""
+
+        # Convert enum to string safely
+        if state is None:
+            return
+        if not isinstance(state, str):
+            state = str(state)        # e.g. "PlayerState.PLAYING"
+
         st = state.lower()
+
         if st == "playing":
             self._handle_playing_started(message)
         elif st in ("paused", "stopped"):
