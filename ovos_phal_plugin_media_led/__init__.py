@@ -226,6 +226,7 @@ class MediaLedPlugin(PHALPlugin):
 
         # Global brightness (0..1)
         self.brightness = float(self.settings.get("brightness", 0.3))
+        self.fps = int(self.settings.get("fps", 60))
 
         # NeoPixel single-pin (default D18)
         gpio_pin_num = self.settings.get("gpio_pin", 18)  # sensible default
@@ -320,6 +321,7 @@ class MediaLedPlugin(PHALPlugin):
         # If lengths differ, use the max; shorter devices ignore out-of-range writes via try/except
         num = max(1, self.leds.num_pixels or 28)
         spacing = 360.0 / float(num)
+        frames = int(self.fps * 6.0)
 
         while not stop_event.is_set() and self.playing:
             hue = int(time.time() * 100) % 360
@@ -335,7 +337,7 @@ class MediaLedPlugin(PHALPlugin):
                 self.leds.show()
             except Exception as e:
                 LOG.debug(f"LED show failed: {e}")
-            time.sleep(0.02)  # ~50 FPS, low CPU
+            time.sleep(1.0 / self.fps)
 
     # ---------- Lifecycle ----------
     def shutdown(self):
