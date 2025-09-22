@@ -3,6 +3,7 @@ import colorsys
 import time
 import threading
 import atexit
+import signal
 from json_database import JsonConfigXDG
 from ovos_plugin_manager.phal import PHALPlugin
 from ovos_utils import create_daemon
@@ -195,15 +196,31 @@ class MultiLED:
                     pass
 
     def close(self):
+        # Clear before deinit/close so the last frame is definitely "off"
         with self._lock:
-            for d in self.drivers:
+            try:
                 try:
-                    d.close()
+                    for d in self.drivers:
+                        try:
+                            d.fill((0, 0, 0))
+                        except Exception:
+                            d.clear()
+                    for d in self.drivers:
+                        try:
+                            d.show()
+                        except Exception:
+                            pass
                 except Exception:
+                    pass
+            finally:
+                for d in self.drivers:
                     try:
-                        d.deinit()
+                        d.close()
                     except Exception:
-                        pass
+                        try:
+                            d.deinit()
+                        except Exception:
+                            pass
 
 
 class MediaLedPlugin(PHALPlugin):
@@ -245,6 +262,7 @@ class MediaLedPlugin(PHALPlugin):
         self.playing = False
         self._anim_thread = None
         self._stop_event = threading.Event()
+        self._shutting_down = False
 
         # === Safe LED init (honor feature flags) ===
         drivers = []
@@ -274,6 +292,20 @@ class MediaLedPlugin(PHALPlugin):
             LOG.info("MediaLedPlugin: no LED drivers available; plugin will no-op.")
         else:
             LOG.info(f"MediaLedPlugin: active LED drivers={len(self.leds.drivers)}, pixels={self.leds.num_pixels}")
+
+        atexit.register(self.shutdown)
+        # Best-effort cleanup if the process receives a termination signal
+        try:  # signal handlers must be in the main thread; ignore if not
+            def _sig_handler(signum, frame):
+                try:
+                    LOG.info(f"MediaLedPlugin: received signal {signum}, shutting down")
+                except Exception:
+                    pass
+                self.shutdown()
+            signal.signal(signal.SIGTERM, _sig_handler)  # <-- add
+            signal.signal(signal.SIGINT, _sig_handler)   # <-- add
+        except Exception:
+            pass
 
         # ---- Event subscriptions ----
         self.bus.on("ovos.common_play.play", self._handle_playing_started)
@@ -310,6 +342,15 @@ class MediaLedPlugin(PHALPlugin):
             return
         self.playing = False
         self._stop_event.set()
+
+        t = self._anim_thread
+        self._anim_thread = None
+        if t and t.is_alive():
+            try:
+                t.join(timeout=1.0)
+            except Exception:
+                pass
+
         try:
             self.leds.clear()
         except Exception as e:
@@ -321,31 +362,44 @@ class MediaLedPlugin(PHALPlugin):
         # If lengths differ, use the max; shorter devices ignore out-of-range writes via try/except
         num = max(1, self.leds.num_pixels or 28)
         spacing = 360.0 / float(num)
-        frames = int(self.fps * 6.0)
 
-        while not stop_event.is_set() and self.playing:
-            hue = int(time.time() * 100) % 360
-            for x in range(num):
-                h = ((hue + x * spacing) % 360) / 360.0
-                r, g, b = [int(c * 255) for c in colorsys.hsv_to_rgb(h, 1.0, 1.0)]
+        try:
+            while not stop_event.is_set() and self.playing:
+                hue = int(time.time() * 100) % 360
+                for x in range(num):
+                    h = ((hue + x * spacing) % 360) / 360.0
+                    r, g, b = [int(c * 255) for c in colorsys.hsv_to_rgb(h, 1.0, 1.0)]
+                    try:
+                        self.leds[x] = (r, g, b)
+                    except Exception as e:
+                        LOG.debug(f"LED set[{x}] failed: {e}")
+                        break
                 try:
-                    self.leds[x] = (r, g, b)
+                    self.leds.show()
                 except Exception as e:
-                    LOG.debug(f"LED set[{x}] failed: {e}")
-                    break
+                    LOG.debug(f"LED show failed: {e}")
+                time.sleep(1.0 / self.fps)
+        finally:
             try:
+                self.leds.clear()
                 self.leds.show()
             except Exception as e:
-                LOG.debug(f"LED show failed: {e}")
-            time.sleep(1.0 / self.fps)
+                LOG.debug(f"LED final clear failed: {e}")
 
     # ---------- Lifecycle ----------
     def shutdown(self):
+        if self._shutting_down:
+            return
+        self._shutting_down = True
         try:
             self._handle_playing_stopped(None)
             if hasattr(self, "leds"):
                 self.leds.clear()
+                self.leds.show()
                 self.leds.close()
         finally:
-            super().shutdown()
+            try:
+                super().shutdown()
+            except Exception:
+                pass
 
