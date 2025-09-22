@@ -3,19 +3,10 @@ import colorsys
 import time
 import threading
 import atexit
+from json_database import JsonConfigXDG
 from ovos_plugin_manager.phal import PHALPlugin
 from ovos_utils import create_daemon
 from ovos_utils.log import LOG
-
-# --- Config import (safe) ---
-try:
-    from ovos_utils.xdg_utils import JsonConfigXDG
-except Exception:
-    # Fallback shim: behaves like a dict with .get()
-    class JsonConfigXDG(dict):
-        def __init__(self, name, subfolder=None):
-            super().__init__()
-
 
 class NullLED:
     def __init__(self, name): self.name = name
