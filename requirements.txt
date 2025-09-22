@@ -1,5 +1,8 @@
+adafruit-circuitpython-dotstar
+adafruit-circuitpython-neopixel
 json_database
+ledshim
 ovos-bus-client
 ovos-plugin-manager
 RPi.GPIO
-ledshim
+rpi_ws281x
